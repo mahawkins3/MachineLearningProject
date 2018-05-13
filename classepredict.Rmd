@@ -1,0 +1,119 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Matt Hawkins"
+date: "13 May 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+This document describes an approach to predicting the manner in which an exercise is completed in 20 test cases, using a data set of over 19,000 observations to train the model.
+
+Various steps are covered, including:
+* Initial Steps
+  + Preparing the R environment for analysis
+  + Loading and preparing the data model
+* Model Selection & Cross Validation
+* Final Prediction
+
+## Initial Steps
+
+Firstly, we prepare the R environment by loading the required packages
+
+```{r packages, results = "hide", message = FALSE, warning = FALSE}
+library(data.table)
+library(ggplot2)
+library(caret)
+library(e1071)
+library(randomForest)
+library(survival)
+library(splines)
+library(parallel)
+library(gbm)
+library(plyr)
+library(MASS)
+```
+
+We then read the training and test data sets
+
+```{r readdata}
+setwd("C:/Users/owner/Dropbox/Coursera/Data Science/MachineLearning/project")
+training <- read.csv("pml-training.csv",
+                  na.strings = c("NA", "#DIV/0!",""))
+test <- read.csv("pml-testing.csv",
+              na.strings = c("NA", "#DIV/0!",""))
+```
+
+Once we have our data in place, the next step is to partition our training set into training and cross-validation sets. This will enable us to get an idea of the accuracy of our model *before* using it to predict our final test set. This allows us to try a variety of models before settling on one.
+
+```{r partition}
+inTrain <- createDataPartition(y = training$classe, p = 0.6, list = FALSE)
+modTrain <- training[inTrain, ]
+modTest <- training[-inTrain, ]
+```
+
+The final step in preparing our data is cleaning it to remove fields that we won't use in our model. A lot of the fields in the raw data are mostly full of blanks or NAs, which obviously doesn't help us. Also, the first seven columns in the data set (which simply identify the observation, test subject, timestamp, etc.) are not going to be of use for our model. We'll get rid of these.
+
+```{r clean}
+modTrainTemp <- modTrain
+for (i in 1:length(modTrain)) {
+  if(sum(is.na(modTrain[ , i])) / nrow(modTrain) >= .6) {
+    for (j in 1:length(modTrainTemp)) {
+      if (length(grep(names(modTrain[i]), names(modTrainTemp)[j])) == 1) {
+      modTrainTemp <- modTrainTemp[ , -j]
+      }
+    }
+  }
+}
+
+modTrainTemp <- modTrainTemp[, 8:length(modTrainTemp)]
+modTrainFinal <- modTrainTemp
+rm(modTrainTemp)
+```
+
+## Model Selection & Cross Validation
+
+Now our data is ready to be fitted to a model, we need to figure out what kind of model produces the greatest accuracy. We do this by training various models against our training subset ("modTrain"") and testing them against the cross validation ("modTest") set. We will fit three models:
+* Random Forest
+* Generalised Boosting Regression Model
+* Linear Discriminant Analysis
+
+```{r train, results = "hide", message = FALSE, warning = FALSE}
+set.seed(42)
+rf_mod <- randomForest(classe ~ ., data = modTrainFinal)
+gbm_mod <- train(classe ~ ., data = modTrainFinal, method = "gbm")
+lda_mod <- train(classe ~ ., data = modTrainFinal, method = "lda")
+
+rf_pred <- predict(rf_mod, modTest)
+gbm_pred <- predict(gbm_mod, modTest)
+lda_pred <- predict(lda_mod, modTest)
+```
+
+We now have three models fitted. Let's compare out of sample accuracy (i.e. how accurately the model predicts "classe" in the cross validation set) for each of them:
+
+```{r accuracy}
+rf_acc <- confusionMatrix(rf_pred, modTest$classe)$overall[1]
+gbm_acc <- confusionMatrix(gbm_pred, modTest$classe)$overall[1]
+lda_acc <- confusionMatrix(lda_pred, modTest$classe)$overall[1]
+acc <- c(rf_acc, gbm_acc, lda_acc)
+names(acc) <- c("RF", "GBM", "LDA")
+print(acc)
+```
+
+Of the three, the Random Forest model is the most accurate, followed by GBM. Our LDA model, while better than random guessing, is nowhere near as accurate.
+
+On this basis, let's use the Random Forest model.
+
+## Final Prediction
+
+Now we simply predict "classe" in the final test set of 20 observations using the Random Forest model we fitted above, and it spits out the predicted manner of exercise for each observation in the sample:
+
+```{r predict}
+predFinal <- predict(rf_mod, newdata = test, type = "class")
+print(predFinal)
+```
+
